@@ -1,0 +1,25 @@
+{
+  "name": "network-file-sharing",
+  "version": "1.0.0",
+  "description": "Peer-to-peer file sharing over WebRTC — send files directly between devices on a LAN (or across networks) with no SMB shares, no OS permissions, no install for the recipient's OS to fight you. Zero runtime dependencies.",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "start:https": "node server.js --https",
+    "dev": "node server.js"
+  },
+  "keywords": [
+    "webrtc",
+    "file-sharing",
+    "p2p",
+    "lan",
+    "peer-to-peer",
+    "airdrop"
+  ],
+  "author": "Inverse.AI",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  }
+}

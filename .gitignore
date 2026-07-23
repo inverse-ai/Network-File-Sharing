@@ -1,0 +1,18 @@
+# Dependencies
+node_modules/
+
+# Local config override
+config.js
+
+# Generated self-signed certificates (HTTPS mode)
+certs/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
