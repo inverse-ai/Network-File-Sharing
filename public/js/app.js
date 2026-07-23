@@ -349,15 +349,24 @@ function completeRow(d) {
   if (!r) return;
   r.bar.style.width = '100%';
   r.rightEl.textContent = '';
-  if (d.direction === 'in' && d.url) {
-    const a = el('a');
-    a.href = d.url;
-    a.download = d.name;
-    a.textContent = `⬇ Save “${d.name}”`;
-    r.dlEl.appendChild(a);
-    // Auto-trigger the download; browsers may still prompt/save silently.
-    a.click();
-    toast(`Received “${d.name}”.`);
+  if (d.direction === 'in') {
+    if (d.savedToDisk) {
+      // Streamed straight to disk — nothing to download, it's already saved.
+      const as = d.savedName && d.savedName !== d.name ? ` as “${d.savedName}”` : '';
+      const note = el('span', 'saved-note');
+      note.textContent = `✓ Saved to disk${as}`;
+      r.dlEl.appendChild(note);
+      toast(`Saved “${d.name}”.`);
+    } else if (d.url) {
+      const a = el('a');
+      a.href = d.url;
+      a.download = d.name;
+      a.textContent = `⬇ Save “${d.name}”`;
+      r.dlEl.appendChild(a);
+      // Auto-trigger the download; browsers may still prompt/save silently.
+      a.click();
+      toast(`Received “${d.name}”.`);
+    }
   } else if (d.direction === 'out') {
     toast('Sent.');
   }
@@ -371,13 +380,28 @@ function escapeHtml(s) {
 // ---------------------------------------------------------------------------
 // Incoming transfer prompt
 // ---------------------------------------------------------------------------
+function canStreamToDisk() {
+  return self.isSecureContext
+    && typeof window.showSaveFilePicker === 'function'
+    && typeof window.showDirectoryPicker === 'function';
+}
+
 function showIncoming(d) {
   const total = d.files.reduce((s, f) => s + f.size, 0);
   const names = d.files.map((f) => f.name).join(', ');
+
+  let note = '';
+  if (canStreamToDisk()) {
+    note = `<br><span class="muted">You'll choose where to save ${d.files.length > 1 ? 'them' : 'it'}.</span>`;
+  } else if (total > 512 * 1024 * 1024) {
+    note = `<br><span class="warn-note">Large transfer — this will be held in memory. ` +
+           `Serve over HTTPS (run with <code>--https</code>) to stream big files straight to disk.</span>`;
+  }
+
   $('#incomingBody').innerHTML =
     `<strong>${escapeHtml(d.sender)}</strong> wants to send you ` +
     `<strong>${d.files.length}</strong> file${d.files.length > 1 ? 's' : ''} ` +
-    `(${fmtBytes(total)}):<br><span class="muted">${escapeHtml(names)}</span>`;
+    `(${fmtBytes(total)}):<br><span class="muted">${escapeHtml(names)}</span>${note}`;
 
   const modal = $('#incomingModal');
   modal.hidden = false;
@@ -389,7 +413,9 @@ function showIncoming(d) {
     accept.onclick = null;
     reject.onclick = null;
   };
-  accept.onclick = () => { cleanup(); d.accept(); };
+  // cleanup() is a synchronous DOM change (doesn't consume the user gesture), and
+  // d.accept() invokes the file picker as its first await — so activation is retained.
+  accept.onclick = () => { cleanup(); Promise.resolve(d.accept()).catch(() => {}); };
   reject.onclick = () => { cleanup(); d.reject(); toast('Declined.'); };
 }
 

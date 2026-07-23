@@ -241,6 +241,10 @@ body {
 .tr-download { margin-top: 8px; }
 .tr-download a { color: var(--accent); font-weight: 600; font-size: 13px; text-decoration: none; }
 .tr-download a:hover { text-decoration: underline; }
+.saved-note { color: var(--success); font-weight: 600; font-size: 13px; }
+
+.warn-note { color: var(--danger); font-size: 12.5px; }
+.warn-note code { background: color-mix(in srgb, var(--danger) 14%, transparent); padding: 1px 5px; border-radius: 5px; }
 
 /* Modals --------------------------------------------------------------- */
 .modal-backdrop {

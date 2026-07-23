@@ -79,6 +79,27 @@ Device A (browser) ── WebSocket signaling ──► Signaling server ◄─�
 3. The receiver approves the transfer; then the file streams over the encrypted
    data channel in **16 KB chunks** with backpressure, progress, speed and ETA.
 
+### Receiving large files (streaming to disk)
+
+When the receiver's browser supports the **File System Access API** in a secure
+context (that means **HTTPS**, or `localhost`), an accepted file streams **straight
+to disk** as it arrives — you pick a destination up front (a file for a single
+transfer, a folder for a batch), and chunks are written and freed immediately.
+Peak memory stays around a few MB regardless of file size, so multi‑GB transfers
+don't blow up the tab.
+
+To keep the receiver's disk from being outrun by a fast network, the receiver acks
+bytes it has actually **committed to disk**, and the sender never streams more than
+a small window (8 MB) ahead of those acks. The sender also waits for a per‑file
+"saved" confirmation before reporting success, so a file is provably on disk before
+the channel closes.
+
+Where the API isn't available (Firefox, Safari, or plain `http://<lan-ip>`), the
+receiver **falls back** to buffering the file in memory and offering it as a normal
+download — fine for everyday files, but this is the case to avoid for very large
+ones, so **serve over HTTPS** (`npm run start:https`) when you need to move big
+files reliably.
+
 ### Project layout
 
 | Path | Role |
@@ -88,7 +109,7 @@ Device A (browser) ── WebSocket signaling ──► Signaling server ◄─�
 | `public/index.html` · `public/css/style.css` | UI |
 | `public/js/signaling.js` | Reconnecting WebSocket signaling client |
 | `public/js/webrtc.js` | `RTCPeerConnection` management (perfect‑negotiation, glare‑safe) |
-| `public/js/transfer.js` | Chunked file send/receive protocol + progress |
+| `public/js/transfer.js` | Chunked send/receive protocol, progress, and streaming‑to‑disk with credit‑based flow control |
 | `public/js/app.js` | UI state and wiring |
 
 ## Configuration
@@ -131,8 +152,6 @@ iceServers: [
   (RFCOMM/OBEX) for offline PC‑to‑PC transfer, plus native filesystem and a
   background service. *(Browsers can't do PC‑to‑PC Bluetooth; Web Bluetooth only
   talks to BLE peripherals, so this needs a native app.)*
-- **Large‑file streaming to disk** — stream received chunks straight to disk via the
-  File System Access API to avoid holding multi‑GB files in memory.
 
 ## License
 

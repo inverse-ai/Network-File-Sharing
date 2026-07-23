@@ -1,8 +1,8 @@
 # Dependencies
 node_modules/
 
-# Local config override
-config.js
+# Local config override (root only — NOT public/js/config.js, which is a source file)
+/config.js
 
 # Generated self-signed certificates (HTTPS mode)
 certs/
