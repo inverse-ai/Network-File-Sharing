@@ -59,6 +59,63 @@ generally work over plain `http://<lan-ip>` too, so try `node server.js` first t
 
 ---
 
+## Install as a service (macOS)
+
+Running `node server.js` by hand works, but it leaves you doing the housekeeping:
+restarting it after a reboot, noticing that DHCP moved you to a new address, and
+reissuing the certificate when it does. The installer takes that over.
+
+```bash
+npm run install:service      # or: node bin/nfs.js install --port=3443
+```
+
+That writes a per-user **LaunchAgent**, so it needs no password and no `sudo`:
+
+- starts at login and restarts if it crashes
+- **picks a free port** if the one you asked for is taken
+- **reissues the certificate when this machine's IP changes**, swapping it into
+  the running server without dropping the listener
+- keeps certificates in `~/Library/Application Support/NetworkFileSharing`, so a
+  `git pull` or a fresh clone does not invalidate the trust your devices granted
+
+### Commands
+
+| Command | Does |
+|---------|------|
+| `nfs install [--port=3443]` | install and start at login |
+| `nfs uninstall` | remove the launch agent (leaves certs and logs) |
+| `nfs start` · `stop` · `restart` | control the running service |
+| `nfs status` | whether it is up, on what URL, and whether the cert is current |
+| `nfs url` | the URL plus a **QR code** to scan with the phone |
+| `nfs logs [-f] [--errors]` | tail the service log |
+| `nfs menubar` | menu bar icon with status, the link, and start/stop |
+
+`nfs url` is the one to reach for day to day — point the phone camera at it
+rather than typing an IP:
+
+```
+  https://192.168.1.156:3443
+
+  █▀▀▀▀▀█ ▄█ ▄ ▀▀█▀ █▀▀▀▀▀█
+  █ ███ █ █▀█▄▀▀▄▀▀ █ ███ █
+  █▄▄▄▄▄█ █ █▀▄ ▄▀▄ █▄▄▄▄▄█
+```
+
+> The installer is macOS-only for now; it is built on launchd. On Linux and
+> Windows, run `npm run start:https` directly — everything else works the same.
+
+### Why the certificate keeps changing
+
+A self-signed certificate is only valid for the addresses named in its
+`subjectAltName`, and a laptop's LAN address is not stable: a new DHCP lease, a
+different network, or a VPN coming up all change it. When that happens the old
+certificate stops validating and the browser blocks the page — on Android Chrome
+sometimes without offering a way through.
+
+The service watches for that drift and reissues the certificate against the
+current addresses, so the only thing you notice is the one-time trust prompt
+appearing again on each device.
+
 ## How it works
 
 ```
@@ -71,8 +128,9 @@ Device A (browser) ── WebSocket signaling ──► Signaling server ◄─�
 ```
 
 1. Each browser opens a WebSocket to the signaling server and is put in a **room**.
-   By default the room is your network group (devices sharing a public IP — i.e. the
-   same LAN — see each other automatically). A **Join by code** box lets you pair
+   By default the room is your network group: devices on the same subnet see each
+   other automatically (behind a reverse proxy, a shared public IP serves the same
+   purpose). A **Join by code** box lets you pair
    devices explicitly (and is the hook for cross‑network use later).
 2. To send, the sender's browser opens a WebRTC connection to the target and a
    dedicated **data channel**, exchanging SDP/ICE through the signaling server.
@@ -111,6 +169,14 @@ files reliably.
 | `public/js/webrtc.js` | `RTCPeerConnection` management (perfect‑negotiation, glare‑safe) |
 | `public/js/transfer.js` | Chunked send/receive protocol, progress, and streaming‑to‑disk with credit‑based flow control |
 | `public/js/app.js` | UI state and wiring |
+| `bin/nfs.js` | CLI: install/uninstall, start/stop/status, URL + QR, logs, menu bar |
+| `src/net.js` | Address helpers: LAN addresses, subnet grouping, free-port selection |
+| `src/cert.js` | Certificate lifecycle — generation and staleness detection on address change |
+| `src/qr.js` · `src/png.js` | Dependency-free QR encoder and greyscale PNG writer |
+| `src/service/launchd.js` | LaunchAgent plist generation and `launchctl` control |
+| `src/service/paths.js` · `state.js` | Install locations, and the state file the CLI and menu bar read |
+| `src/menubar/MenuBar.swift` | Menu bar app, compiled on first use (no npm dependency) |
+| `test/qr.test.js` | Regression tests for the QR encoder |
 
 ## Configuration
 
@@ -128,9 +194,14 @@ iceServers: [
 ## Requirements
 
 - **Node.js 18+**
+- **OpenSSL 1.1.1+** on `PATH` for HTTPS mode (macOS and most Linux ship it; on
+  Windows it comes with Git for Windows)
+- For `nfs install` and `nfs menubar`: **macOS**, plus the Xcode Command Line
+  Tools (`xcode-select --install`) — the menu bar app is compiled on first use
 - Both devices reachable on the same network for LAN transfers (or a shared room
   code for manual pairing). If they can't see each other, check the host firewall
-  allows inbound connections on the port (default `3000`).
+  allows inbound connections on the port (default `3000`), and that your router
+  does not have AP/client isolation enabled for the network.
 
 ## Security notes
 

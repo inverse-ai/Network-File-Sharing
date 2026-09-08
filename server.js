@@ -21,8 +21,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
-import { execFileSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+
+import { lanAddresses, subnetKeyFor, findFreePort } from './src/net.js';
+import { ensureCert, certCoversCurrentAddresses, certPaths } from './src/cert.js';
+import { writeState, clearState } from './src/service/state.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, 'public');
@@ -67,36 +70,6 @@ function randomName() {
 // ever discovered. Key on the enclosing subnet instead, taken from our own
 // interface netmasks so it reflects the real network rather than assuming /24.
 // ---------------------------------------------------------------------------
-function ipv4ToInt(ip) {
-  const parts = String(ip).split('.');
-  if (parts.length !== 4) return null;
-  let n = 0;
-  for (const part of parts) {
-    const byte = Number(part);
-    if (!Number.isInteger(byte) || byte < 0 || byte > 255) return null;
-    n = n * 256 + byte;
-  }
-  return n;
-}
-
-/** The subnet of one of our own interfaces containing `ip`, as "base/mask". */
-function subnetKeyFor(ip) {
-  const addr = ipv4ToInt(ip);
-  if (addr === null) return null;
-  for (const ifaces of Object.values(os.networkInterfaces())) {
-    for (const iface of ifaces || []) {
-      if (iface.family !== 'IPv4' || iface.internal) continue;
-      const local = ipv4ToInt(iface.address);
-      const mask = ipv4ToInt(iface.netmask);
-      if (local === null || mask === null) continue;
-      if ((local & mask) === (addr & mask)) {
-        return `${(local & mask) >>> 0}/${mask >>> 0}`;
-      }
-    }
-  }
-  return null;
-}
-
 function networkGroupFor(req) {
   const xff = req.headers['x-forwarded-for'];
   let ip = xff ? String(xff).split(',')[0].trim() : (req.socket.remoteAddress || '');
@@ -298,11 +271,30 @@ class WSConn extends EventEmitter {
 // ---------------------------------------------------------------------------
 // HTTP(S) server bootstrap.
 // ---------------------------------------------------------------------------
+// Certificates live outside the checkout when running as an installed service,
+// so an upgrade or a fresh clone does not invalidate the trust each device has
+// already granted. --cert-dir is how the launch agent points us at them.
+const certDirArg = process.argv.indexOf('--cert-dir');
+const CERT_DIR = certDirArg !== -1 && process.argv[certDirArg + 1]
+  ? path.resolve(process.argv[certDirArg + 1])
+  : path.join(__dirname, 'certs');
+
 let server;
 if (useHttps) {
-  const { key, cert } = ensureCert();
-  server = https.createServer({ key, cert }, requestHandler);
-} else {
+  let material;
+  try {
+    material = ensureCert(CERT_DIR);
+  } catch (err) {
+    console.error(`\n  ${err.message}\n`);
+    process.exit(1);
+  }
+  if (material.regenerated === 'address-change') {
+    console.log('\n  This machine\'s address changed, so the certificate was reissued.');
+    console.log('  Devices will show the trust prompt once more.\n');
+  }
+  server = https.createServer({ key: material.key, cert: material.cert }, requestHandler);
+}
+else {
   server = http.createServer(requestHandler);
 }
 
@@ -435,68 +427,27 @@ function onConnection(ws, req) {
 }
 
 // ---------------------------------------------------------------------------
-// Self-signed certificate for HTTPS mode (via OpenSSL, cached in ./certs).
-// ---------------------------------------------------------------------------
-// Browsers match the hostname against the certificate's subjectAltName and
-// ignore the legacy CN fallback (Chrome dropped it in v58), so a cert with only
-// a CN is rejected outright — on Android Chrome sometimes without even offering
-// the "proceed anyway" bypass. Name every address the app is reached by,
-// including the LAN IPs the startup banner prints: those are what phones use.
-function certAltNames() {
-  const names = ['DNS:network-file-sharing.local', 'DNS:localhost', 'IP:127.0.0.1'];
-  for (const addr of lanAddresses()) names.push(`IP:${addr}`);
-  return names.join(',');
-}
-
-function ensureCert() {
-  const dir = path.join(__dirname, 'certs');
-  const keyPath = path.join(dir, 'key.pem');
-  const certPath = path.join(dir, 'cert.pem');
-  if (fs.existsSync(keyPath) && fs.existsSync(certPath)) {
-    return { key: fs.readFileSync(keyPath), cert: fs.readFileSync(certPath) };
-  }
-  fs.mkdirSync(dir, { recursive: true });
-  try {
-    execFileSync('openssl', [
-      'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
-      '-keyout', keyPath, '-out', certPath,
-      '-days', '825', '-subj', '/CN=network-file-sharing.local',
-      '-addext', `subjectAltName=${certAltNames()}`
-    ], { stdio: 'ignore' });
-  } catch {
-    console.error(
-      '\n  HTTPS mode needs OpenSSL 1.1.1+ to generate a self-signed certificate,\n' +
-      '  but it was not found on PATH (or is too old for -addext). Install OpenSSL\n' +
-      '  (Git for Windows ships it), or drop your own certs at certs/key.pem and\n' +
-      '  certs/cert.pem.\n'
-    );
-    process.exit(1);
-  }
-  return { key: fs.readFileSync(keyPath), cert: fs.readFileSync(certPath) };
-}
-
-// ---------------------------------------------------------------------------
 // Listen + print reachable URLs.
 // ---------------------------------------------------------------------------
-function lanAddresses() {
-  const out = [];
-  for (const ifaces of Object.values(os.networkInterfaces())) {
-    for (const i of ifaces || []) {
-      if (i.family === 'IPv4' && !i.internal) out.push(i.address);
-    }
-  }
-  return out;
-}
+const scheme = useHttps ? 'https' : 'http';
 
-server.listen(config.port, config.host, () => {
-  const scheme = useHttps ? 'https' : 'http';
+// Dev servers cluster on the usual ports, and losing to one is confusing rather
+// than fatal: on macOS a 0.0.0.0 bind happily coexists with an existing
+// 127.0.0.1 bind on the same port, so the app comes up reachable from phones
+// but dead on localhost. Step aside instead.
+const port = await findFreePort(config.port, config.host);
+
+server.listen(port, config.host, () => {
+  if (port !== config.port) {
+    console.log(`\n  Port ${config.port} was busy; using ${port} instead.`);
+  }
   const lines = [
     '',
     '  Network File Sharing  —  WebRTC peer-to-peer',
     '  ------------------------------------------------',
-    `  Local:    ${scheme}://localhost:${config.port}`
+    `  Local:    ${scheme}://localhost:${port}`
   ];
-  for (const ip of lanAddresses()) lines.push(`  Network:  ${scheme}://${ip}:${config.port}`);
+  for (const ip of lanAddresses()) lines.push(`  Network:  ${scheme}://${ip}:${port}`);
   lines.push('');
   if (!useHttps) {
     lines.push('  Tip: for Safari/iOS or hardened browsers, run with --https');
@@ -504,4 +455,44 @@ server.listen(config.port, config.host, () => {
     lines.push('');
   }
   console.log(lines.join('\n'));
+
+  writeState({ pid: process.pid, port, scheme, https: useHttps, certDir: useHttps ? CERT_DIR : null });
 });
+
+// ---------------------------------------------------------------------------
+// Keep the certificate valid as the machine moves between networks.
+// ---------------------------------------------------------------------------
+// A laptop changes address constantly -- new DHCP lease, different Wi-Fi, a VPN
+// coming up -- and each time, a certificate minted for the old address stops
+// validating for the new one. Rather than make that the user's problem, watch
+// for the drift and swap the material in place: setSecureContext re-arms the
+// listener without dropping it, so the server never goes down for this.
+if (useHttps) {
+  const CHECK_INTERVAL_MS = 30_000;
+  let known = lanAddresses().join(',');
+
+  const timer = setInterval(() => {
+    const current = lanAddresses();
+    if (current.join(',') === known) return;
+    known = current.join(',');
+
+    const { certPath } = certPaths(CERT_DIR);
+    if (certCoversCurrentAddresses(certPath, current)) return;
+
+    try {
+      const fresh = ensureCert(CERT_DIR, { addresses: current, force: true });
+      server.setSecureContext({ key: fresh.key, cert: fresh.cert });
+      console.log(`\n  Address changed to ${current.join(', ')} — certificate reissued.`);
+      for (const ip of current) console.log(`  Network:  ${scheme}://${ip}:${port}`);
+      console.log('  Devices will show the trust prompt once more.\n');
+      writeState({ pid: process.pid, port, scheme, https: true, certDir: CERT_DIR });
+    } catch (err) {
+      console.error(`  Could not reissue the certificate: ${err.message}`);
+    }
+  }, CHECK_INTERVAL_MS);
+  timer.unref();
+}
+
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.on(signal, () => { clearState(); process.exit(0); });
+}
