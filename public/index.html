@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="light dark" />
+  <title>Network File Sharing</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📡</text></svg>" />
+  <link rel="stylesheet" href="./css/style.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="logo" aria-hidden="true">📡</span>
+        <div>
+          <h1>Network File Sharing</h1>
+          <p class="tagline">Direct peer-to-peer transfers over WebRTC — no shares, no permissions to fight.</p>
+        </div>
+      </div>
+      <div class="conn" id="conn">
+        <span class="dot" id="connDot"></span>
+        <span id="connText">connecting…</span>
+      </div>
+    </header>
+
+    <section class="identity card">
+      <div class="identity-main">
+        <span class="avatar" id="selfAvatar" aria-hidden="true">💻</span>
+        <div>
+          <div class="identity-label">This device</div>
+          <div class="identity-name">
+            <input id="selfName" class="name-input" type="text" maxlength="40" spellcheck="false"
+                   aria-label="Your device name" placeholder="Your device" />
+            <button id="saveName" class="ghost-btn" title="Save name">Rename</button>
+          </div>
+        </div>
+      </div>
+      <div class="room-box">
+        <label for="roomCode">Room</label>
+        <div class="room-row">
+          <input id="roomCode" class="room-input" type="text" maxlength="32" spellcheck="false"
+                 placeholder="LAN (auto)" aria-label="Room code" />
+          <button id="joinRoom" class="ghost-btn">Join</button>
+        </div>
+        <p class="hint" id="roomHint">You're on your local network. Anyone here sees you automatically.</p>
+      </div>
+    </section>
+
+    <main class="layout">
+      <section class="devices card">
+        <div class="section-head">
+          <h2>Nearby devices</h2>
+          <span class="count" id="deviceCount">0</span>
+        </div>
+        <ul class="device-list" id="deviceList"></ul>
+        <div class="empty" id="devicesEmpty">
+          <p>No other devices yet.</p>
+          <p class="muted">Open this same page on another device on your network, or share a room code to pair across networks.</p>
+        </div>
+      </section>
+
+      <section class="dropzone-wrap card">
+        <div class="section-head">
+          <h2>Send files</h2>
+        </div>
+        <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Choose files to send">
+          <span class="dz-icon" aria-hidden="true">📁</span>
+          <p class="dz-title">Drop files here</p>
+          <p class="dz-sub">or click to choose — then pick a device to send to</p>
+          <input type="file" id="fileInput" multiple hidden />
+        </div>
+        <ul class="staged" id="staged"></ul>
+      </section>
+    </main>
+
+    <section class="transfers card" id="transfersCard" hidden>
+      <div class="section-head">
+        <h2>Transfers</h2>
+        <button class="ghost-btn" id="clearDone">Clear finished</button>
+      </div>
+      <ul class="transfer-list" id="transferList"></ul>
+    </section>
+
+    <footer class="footer">
+      <span>Files travel directly between devices, DTLS-encrypted. The server only introduces peers — it never sees your files.</span>
+    </footer>
+  </div>
+
+  <!-- Incoming transfer prompt -->
+  <div class="modal-backdrop" id="incomingModal" hidden>
+    <div class="modal card" role="dialog" aria-modal="true" aria-labelledby="incomingTitle">
+      <h3 id="incomingTitle">Incoming file</h3>
+      <p class="modal-body" id="incomingBody"></p>
+      <div class="modal-actions">
+        <button class="btn danger" id="rejectBtn">Decline</button>
+        <button class="btn primary" id="acceptBtn">Accept</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Device picker (when files staged, choose a target) -->
+  <div class="modal-backdrop" id="pickModal" hidden>
+    <div class="modal card" role="dialog" aria-modal="true" aria-labelledby="pickTitle">
+      <h3 id="pickTitle">Send to…</h3>
+      <ul class="pick-list" id="pickList"></ul>
+      <div class="modal-actions">
+        <button class="btn" id="pickCancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+
+  <script type="module" src="./js/app.js"></script>
+</body>
+</html>
