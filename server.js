@@ -56,15 +56,66 @@ function randomName() {
 }
 
 // ---------------------------------------------------------------------------
-// Network grouping: peers sharing a public IP are (almost always) on the same
-// LAN, so we use that as the default room => AirDrop-style auto-discovery.
+// Network grouping: peers on the same network share a default room, giving
+// AirDrop-style auto-discovery.
+//
+// The address we see for a peer depends on where this server sits. Behind a
+// reverse proxy on the internet, x-forwarded-for carries the peer's public IP
+// and peers on one LAN share it. But in the normal case -- this server running
+// *on* the LAN -- every peer connects from its own private address, so keying
+// the room on the raw address puts each device in a room of one and nothing is
+// ever discovered. Key on the enclosing subnet instead, taken from our own
+// interface netmasks so it reflects the real network rather than assuming /24.
 // ---------------------------------------------------------------------------
+function ipv4ToInt(ip) {
+  const parts = String(ip).split('.');
+  if (parts.length !== 4) return null;
+  let n = 0;
+  for (const part of parts) {
+    const byte = Number(part);
+    if (!Number.isInteger(byte) || byte < 0 || byte > 255) return null;
+    n = n * 256 + byte;
+  }
+  return n;
+}
+
+/** The subnet of one of our own interfaces containing `ip`, as "base/mask". */
+function subnetKeyFor(ip) {
+  const addr = ipv4ToInt(ip);
+  if (addr === null) return null;
+  for (const ifaces of Object.values(os.networkInterfaces())) {
+    for (const iface of ifaces || []) {
+      if (iface.family !== 'IPv4' || iface.internal) continue;
+      const local = ipv4ToInt(iface.address);
+      const mask = ipv4ToInt(iface.netmask);
+      if (local === null || mask === null) continue;
+      if ((local & mask) === (addr & mask)) {
+        return `${(local & mask) >>> 0}/${mask >>> 0}`;
+      }
+    }
+  }
+  return null;
+}
+
 function networkGroupFor(req) {
   const xff = req.headers['x-forwarded-for'];
   let ip = xff ? String(xff).split(',')[0].trim() : (req.socket.remoteAddress || '');
   ip = ip.replace(/^::ffff:/, '');
   if (ip === '::1') ip = '127.0.0.1';
-  return `lan:${ip}`;
+
+  // A loopback peer is a browser on this very machine, which sits on every LAN
+  // this host is attached to; put it with the first of them so the host's own
+  // browser discovers the phones. (On a multi-homed host that is a guess --
+  // open the printed Network URL rather than localhost to pin it explicitly.)
+  if (ip.startsWith('127.')) {
+    const [first] = lanAddresses();
+    const key = first ? subnetKeyFor(first) : null;
+    return `lan:${key || ip}`;
+  }
+
+  // Falls back to the bare address for public IPs and IPv6, where the
+  // shared-address assumption above already holds.
+  return `lan:${subnetKeyFor(ip) || ip}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -386,6 +437,17 @@ function onConnection(ws, req) {
 // ---------------------------------------------------------------------------
 // Self-signed certificate for HTTPS mode (via OpenSSL, cached in ./certs).
 // ---------------------------------------------------------------------------
+// Browsers match the hostname against the certificate's subjectAltName and
+// ignore the legacy CN fallback (Chrome dropped it in v58), so a cert with only
+// a CN is rejected outright — on Android Chrome sometimes without even offering
+// the "proceed anyway" bypass. Name every address the app is reached by,
+// including the LAN IPs the startup banner prints: those are what phones use.
+function certAltNames() {
+  const names = ['DNS:network-file-sharing.local', 'DNS:localhost', 'IP:127.0.0.1'];
+  for (const addr of lanAddresses()) names.push(`IP:${addr}`);
+  return names.join(',');
+}
+
 function ensureCert() {
   const dir = path.join(__dirname, 'certs');
   const keyPath = path.join(dir, 'key.pem');
@@ -398,13 +460,15 @@ function ensureCert() {
     execFileSync('openssl', [
       'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
       '-keyout', keyPath, '-out', certPath,
-      '-days', '825', '-subj', '/CN=network-file-sharing.local'
+      '-days', '825', '-subj', '/CN=network-file-sharing.local',
+      '-addext', `subjectAltName=${certAltNames()}`
     ], { stdio: 'ignore' });
   } catch {
     console.error(
-      '\n  HTTPS mode needs OpenSSL to generate a self-signed certificate, but it\n' +
-      '  was not found on PATH. Either install OpenSSL (Git for Windows ships it),\n' +
-      '  or drop your own certs at certs/key.pem and certs/cert.pem.\n'
+      '\n  HTTPS mode needs OpenSSL 1.1.1+ to generate a self-signed certificate,\n' +
+      '  but it was not found on PATH (or is too old for -addext). Install OpenSSL\n' +
+      '  (Git for Windows ships it), or drop your own certs at certs/key.pem and\n' +
+      '  certs/cert.pem.\n'
     );
     process.exit(1);
   }
