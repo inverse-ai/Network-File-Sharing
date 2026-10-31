@@ -39,6 +39,16 @@ Then open the printed URL. The server prints both a local and a network address:
   zone and pick a target). The receiver gets an **Accept / Decline** prompt, then
   the file transfers directly.
 
+## Windows notification-area icon
+
+Run `powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\windows-tray.ps1`
+to show a notification-area icon and start the HTTP server without keeping a
+terminal open. Double-click the icon to open the app; right-click it for status
+and server controls. Windows may place the icon in the hidden-icons menu.
+Exiting the icon stops the server it started. If a server was already running,
+the icon monitors it but does not stop it. Pass `-Port 3001` when using a
+different HTTP port; the tray does not support HTTPS or custom `config.js` ports.
+
 ## HTTPS mode (recommended for phones / Safari / iOS)
 
 WebRTC needs a *secure context* in some browsers (notably Safari and iOS) when the
